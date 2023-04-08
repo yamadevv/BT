@@ -76,8 +76,45 @@ def pivotlow(df):
 
 
 df = pd.read_csv("nfmarch1915min.csv")
+
 df.dropna(inplace=True)
 df.reset_index(inplace=True)
+
+
+##### adding old strategy to perform a backtest
+
+df['BH'] = abs(df['Open'] - df['Close'])
+df['CH'] = abs(df['High'] - df['Low'])
+df['IC'] = df['BH'] / df['CH'] * 100
+df['tiny'] = df['CH'] / df['Open'] * 100
+
+def tinyic(df):
+    
+    if df['tiny'] < 0.15 and df['IC'] < 50.0:
+        return True
+    else:
+        return False
+
+df["tinyic"] = df.apply(tinyic, axis=1)
+df.reset_index(inplace=True)
+df = df.drop(['index'],axis=1)
+
+df.loc[df['tinyic'] == True, 'SLB'] = df['Low']*0.999
+df.loc[df['tinyic'] == True, 'SLS'] = df['High']*1.001
+
+for i in (df.index):
+    print(i)
+    if ((df.iloc[i]['Date_Time'][-8:]) == "09:15:00"):
+        #print("Cuurent index numer is ",i)
+        df.loc[i,'DO'] = df.iloc[i]['Open']
+
+df = df.fillna(method = 'ffill')
+df = df.fillna(method = 'bfill')
+
+#####
+
+
+
 
 a,b = pivothigh(df)
 c,d = pivotlow(df)
@@ -313,14 +350,183 @@ df['Trendz'] = df.Trend + df.Trend1
 
 df.loc[df['Trendz'].isin(['Bullishnan']),'Trendz'] = 'Bullish'
 df.loc[df['Trendz'].isin(['nanBearish']),'Trendz'] = 'Bearish'
-df.loc[df['Trendz'].isin(['nannan']),'Trendz'] = 'nan'
+df.loc[df['Trendz'].isin(['nannan']),'Trendz'] = np.nan
 
 #df = df.mask(df=='nan', None).ffill()
-df = df.drop(['Trend', 'Trend1'],axis=1)
+df = df.drop(['Volume', 'SPL', 'SPH', 'Trend', 'Trend1', 'level_0'],axis=1)
 
-print(df[20:30])
+df['Trendz'] = df['Trendz'].ffill()
+print(df[20:40])
 #####
 
 #####
+# Need to add large pivots also to this code 
+
+
 
 #####
+tl = []
+tl2 = []
+
+count = 0
+pos = 0
+long_trade_triggered = 0
+short_trade_triggered = 0
+
+for index, row in df[1:].iterrows():
+    
+    previous_row = df.iloc[index-1]
+    if pos == 0:
+        
+        print("No position looking for either long or short")
+        
+        if ((previous_row['tinyic'] == True) & (previous_row['Trendz'] == "Bullish") & (row['High'] > previous_row['High']*1.001) & (row['High'] > previous_row['DO'])):
+            
+            print("long")
+            pos = 1
+            long_trade_triggered = 1
+            short_trade_triggered = 0
+            tl.append([row['Date_Time'],previous_row['High']*1.001,"BUY"])
+   
+        elif ((previous_row['tinyic'] == True) & (previous_row['Trendz'] == "Bearish") & (row['Low'] < previous_row['Low']*0.999) & (row['Low'] < previous_row['DO'])):
+            
+            print("short")
+            pos = 1
+            short_trade_triggered = 1
+            long_trade_triggered = 0
+            tl2.append([row['Date_Time'],previous_row['Low']*0.999,"SELL"])
+    
+    elif ((pos == 1) & (long_trade_triggered == 1)):
+        
+        print("Looking for SLB or looking for a short")
+        
+        #if (((row['Close'] < previous_row['SLB']) or (row['Low'] < previous_row['SLB']) or (row['Open'] < previous_row['SLB'])) or (row['minima'] < previous_row['SLB'])):
+        if ((row['Close'] < previous_row['SLB']) or (row['Low'] < previous_row['SLB']) or (row['Open'] < previous_row['SLB'])):
+        
+            print("Exit Buy SL")
+            pos = 0 
+            long_trade_triggered = 0
+            tl2.append([row['Date_Time'],previous_row['SLB'],"SL EXIT"])
+            #Tinyic use these value
+            
+        elif ((previous_row['IC'] < 50) & (row['Low'] < previous_row['Low'] * 0.999)):
+            
+            print("Exit trail SL")
+            pos = 0
+            long_trade_triggered = 0
+            tl2.append([row['Date_Time'],previous_row['Low'] * 0.999," Trail SL"])
+
+        elif ((previous_row['tinyic'] == True) & (previous_row['Trendz'] == "Bearish") & (row['Low'] < previous_row['Low']*0.999) & (row['Low'] < previous_row['DO'])):
+            
+            print("short")
+            pos = 1
+            short_trade_triggered = 1
+            long_trade_triggered = 0
+            tl2.append([row['Date_Time'],previous_row['Low']*0.999,"SELL"])
+            
+    
+    elif ((pos == 1) and (short_trade_triggered == 1)):
+        
+        print("Looking for SLS or looking for a long")
+        
+        if ((row['Close'] > previous_row['SLS'])or (row['Open'] > previous_row['SLS']) or (row['High'] > previous_row['SLS'])):
+        
+            print("Exit Sell SL")
+            pos = 0 
+            long_trade_triggered = 0
+            tl.append([row['Date_Time'],previous_row['SLS'],"SL EXIT"])
+            #Tinyic use these value
+            
+        elif ((previous_row['IC'] < 50) & (row['High'] > previous_row['High'] * 1.001)):
+            
+            print("Exit trail SL")
+            pos = 0
+            long_trade_triggered = 0
+            tl.append([row['Date_Time'],previous_row['High'] * 1.001," Trail SL"])
+
+        elif ((previous_row['tinyic'] == True) & (previous_row['Trendz'] == "Bullish") & (row['High'] > previous_row['High'] * 1.001) & (row['High']*1.001 > previous_row['DO'])):
+            
+            print("long")
+            pos = 1
+            short_trade_triggered = 0
+            long_trade_triggered = 1
+            tl2.append([row['Date_Time'],previous_row['High']*1.001,"BUY"])
+
+###
+df1 = pd.DataFrame(tl,columns=["Entry_time","Entry_price","Type"])
+df2 = pd.DataFrame(tl2,columns=["Exit_time","Exit_price","Exit"])
+frames = [df1,df2]
+dff = pd.concat(frames,axis=1)
+
+dff.dropna(inplace=True)
+dff.reset_index(drop=True,inplace=True)
+
+dff['pnl'] = dff['Exit_price'] - dff['Entry_price']
+print(dff['pnl'].max(),dff['pnl'].min())
+
+dff['entry_including_slippage'] = dff['Entry_price'] + (dff['Entry_price']*0.0005)
+dff['exit_including_slippage'] = dff['Exit_price'] - (dff['Exit_price']*0.0005)
+dff['pnl_including_slippage'] = dff['exit_including_slippage'] - dff['entry_including_slippage'] 
+
+dff['pnl_including_slippage'].cumsum().plot()
+
+####
+dff['pnl_including_slippage_cumulative_sum'] = dff['pnl_including_slippage'].cumsum()
+print(dff['pnl_including_slippage'].cumsum())
+
+dff['drawdown'] = dff['pnl_including_slippage_cumulative_sum'] - dff['pnl_including_slippage_cumulative_sum'].cummax()
+max_drawdown = round(dff['drawdown'].min(),2)
+#print("Max dd is",max_drawdown)
+
+dff['recovery'] = 0
+for i in range(len(dff)):
+    if (dff['drawdown'].iloc[i] < 0):
+        dff['recovery'].iloc[i] = dff['recovery'].iloc[i-1] + 1
+recovery_trades = dff['recovery'].max()
+#print("No of trades to recovery",recovery_trades)
+
+number_of_trading_days_for_this_backtest = (pd.to_datetime(dff.iloc[-1]['Entry_time'][0:10]) - pd.to_datetime(dff.iloc[0]['Entry_time'][0:10]))
+#print("No of trading days in the backtest",(number_of_trading_days_for_this_backtest))
+
+trade_log_equity_high = dff[dff['recovery'] == 0]
+
+l = []
+n = pd.to_datetime(trade_log_equity_high['Entry_time'])- pd.to_datetime(trade_log_equity_high['Entry_time'].shift())
+n.dropna(inplace=True)
+n.reset_index(drop=True,inplace=True)
+for i in n:
+    l.append(int(str(i)[0:2]))
+    
+print("The number of days in dd is",max(l))
+
+
+####
+#BT metrics
+print("The total number of trades are ",len(dff))
+
+oc = df.iloc[-1]['Close'] - df['Open'][0]
+print('Nifty buy and hold ',oc)
+
+print("Total points including slippage",dff['pnl_including_slippage'].cumsum()[len(dff)-1])
+
+n = len(dff[dff['pnl_including_slippage']>0])
+s = sum(dff[dff['pnl_including_slippage']>0]['pnl_including_slippage'])
+avgwin = s/n
+print("Average winner ", avgwin)
+
+nn = len(dff[dff['pnl_including_slippage']<0])
+ns = sum(dff[dff['pnl_including_slippage'] < 0]['pnl_including_slippage'])
+avglos = ns/nn
+print("Average loser ",avglos)
+
+print("Max dd is",max_drawdown)
+
+print("No of trades to recovery",recovery_trades)
+
+#print("The number of days in dd is",max(l))
+
+print("No of trading days in the backtest",(number_of_trading_days_for_this_backtest))
+    
+print("No of winners",len(dff.loc[dff['pnl'] > 0]))
+
+print("No of losers",len(dff.loc[dff['pnl'] < 0]))
